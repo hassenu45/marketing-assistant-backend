@@ -1,0 +1,5 @@
+node_modules/
+.wwebjs_auth/
+.wwebjs_cache/
+ai_config.json
+.env
