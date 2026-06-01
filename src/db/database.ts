@@ -59,6 +59,11 @@ export interface AIConfig {
   businessContext: string
   aiTone: string
   handlingRules: string
+  phoneFormat: string
+  addressFormat: string
+  deliveryCommission: number
+  botDms: number
+  botComments: number
   updatedAt: string
 }
 

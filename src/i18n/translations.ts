@@ -102,6 +102,9 @@ const translations: Record<Lang, Record<string, string>> = {
     arrived_notified: 'تم إشعار الوصول',
     mark_arrived: 'تحديد كواصل',
     total_sales: 'إجمالي المبيعات',
+    net_commission: 'صافي العمولة',
+    sales_chart: 'الرسم البياني للمبيعات',
+    export_excel: 'تصدير Excel',
   },
   en: {
     app_name: 'Marketing Assistant',
@@ -204,6 +207,9 @@ const translations: Record<Lang, Record<string, string>> = {
     arrived_notified: 'Arrival Notified',
     mark_arrived: 'Mark as Arrived',
     total_sales: 'Total Sales',
+    net_commission: 'Net Commission',
+    sales_chart: 'Sales Chart',
+    export_excel: 'Export Excel',
   },
 }
 

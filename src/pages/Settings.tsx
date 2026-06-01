@@ -6,7 +6,6 @@ import db, { exportDatabase, importDatabase as importDB, type BotConfig, type Ar
 import Toast from '../components/Toast'
 import Modal from '../components/Modal'
 import { FiSave, FiDownload, FiUpload, FiPlus, FiTrash2 } from 'react-icons/fi'
-import { Smartphone, WifiOff } from 'lucide-react'
 import { API_URL } from '../config'
 
 const accentColors: Record<string, string> = {
@@ -33,9 +32,8 @@ export default function Settings() {
   const [templateModal, setTemplateModal] = useState(false)
   const [newTemplate, setNewTemplate] = useState({ platform: 'whatsapp' as Platform, message: '' })
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
-  const [qrCode, setQrCode] = useState<string | null>(null)
-  const [connected, setConnected] = useState(false)
-  const [phoneNumber, setPhoneNumber] = useState<string | null>(null)
+  const [igConnected, setIgConnected] = useState(false)
+  const [webhookUrl, setWebhookUrl] = useState('')
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -46,16 +44,18 @@ export default function Settings() {
 
     pollingRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`${API_URL}/api/whatsapp/status`)
+        const res = await fetch(`${API_URL}/api/instagram/status`)
         const data = await res.json()
-        setQrCode(data.qr || null)
-        setConnected(data.ready || false)
-        setPhoneNumber(data.phone || null)
+        setIgConnected(data.connected || false)
       } catch {
-        setConnected(false)
-        setQrCode(null)
+        setIgConnected(false)
       }
-    }, 3000)
+    }, 5000)
+
+    fetch(`${API_URL}/api/webhook/instagram/test`)
+      .then(r => r.json())
+      .then(d => setWebhookUrl(d.webhook_url || ''))
+      .catch(() => {})
 
     return () => { if (pollingRef.current) clearInterval(pollingRef.current) }
   }, [])
@@ -117,9 +117,23 @@ export default function Settings() {
             <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{t('shop_name', lang)}</label>
             <input className="input-field" value={shopName} onChange={e => setShopName(e.target.value)} />
           </div>
-          <div className="w-24">
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{t('currency', lang)}</label>
-            <input className="input-field" value={currency} onChange={e => setCurrency(e.target.value)} />
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-gray-300">العملة</label>
+            <select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              className="w-full p-3 bg-[#1a2332] text-white rounded-xl border border-gray-700 focus:outline-none focus:border-blue-500 cursor-pointer"
+            >
+              <option value="SAR">SAR (ريال سعودي)</option>
+              <option value="JOD">JOD (دينار أردني)</option>
+              <option value="AED">AED (درهم إماراتي)</option>
+              <option value="EGP">EGP (جنيه مصري)</option>
+              <option value="KWD">KWD (دينار كويتي)</option>
+              <option value="QAR">QAR (ريال قطري)</option>
+              <option value="OMR">OMR (ريال عماني)</option>
+              <option value="BHD">BHD (دينار بحريني)</option>
+              <option value="USD">USD (دولار أمريكي)</option>
+            </select>
           </div>
           <button onClick={saveShop} className="btn-accent flex items-center gap-2 text-sm"><FiSave /> {t('save', lang)}</button>
         </div>
@@ -162,52 +176,52 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* WhatsApp Smart Connection */}
+      {/* Instagram Connection */}
       <div className={`card p-5 border-2 transition-colors ${
-        connected
+        igConnected
           ? 'border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10'
-          : qrCode
-            ? 'border-yellow-300 dark:border-yellow-700 bg-yellow-50/50 dark:bg-yellow-900/10'
-            : 'border-gray-200 dark:border-gray-700'
+          : 'border-gray-200 dark:border-gray-700'
       }`}>
         <h2 className="font-semibold text-gray-900 dark:text-white mb-4">
-          إعدادات ربط الواتساب الذكي
+          ربط بوت الإنستغرام
         </h2>
-        <div className="flex items-center gap-3 mb-2">
-          <div className={`w-3 h-3 rounded-full ${
-            connected ? 'bg-green-500' : qrCode ? 'bg-yellow-500 animate-pulse' : 'bg-gray-400'
-          }`} />
+        <div className="flex items-center gap-3 mb-4">
+          <div className={`w-3 h-3 rounded-full ${igConnected ? 'bg-green-500' : 'bg-gray-400'}`} />
           <div>
-            {connected ? (
-              <p className="font-medium text-green-700 dark:text-green-300">
-                الواتساب متصل حياً وجاهز للرد التلقائي 🟢
-              </p>
-            ) : qrCode ? (
-              <p className="font-medium text-yellow-700 dark:text-yellow-300">
-                يرجى مسح الرمز لربط رقم متجرك
-              </p>
-            ) : (
-              <p className="font-medium text-gray-500 dark:text-gray-400">
-                في انتظار الاتصال بالخادم...
-              </p>
-            )}
-            {connected && phoneNumber && (
-              <p className="text-sm text-green-600 dark:text-green-400 mt-0.5 flex items-center gap-1" dir="ltr">
-                <Smartphone className="w-3.5 h-3.5" />
-                {phoneNumber}
-              </p>
-            )}
-            {!connected && !qrCode && (
-              <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                <WifiOff className="w-3 h-3" />
-                تأكد من تشغيل الخادم على {API_URL}
+            <p className={`font-medium ${igConnected ? 'text-green-700 dark:text-green-300' : 'text-gray-500 dark:text-gray-400'}`}>
+              {igConnected
+                ? 'بوت الإنستغرام متصل وجاهز للرد التلقائي 🟢'
+                : 'البوت غير متصل — أضف بيانات الـ API في ملف .env'}
+            </p>
+            {igConnected && (
+              <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                سيتم الرد على الرسائل والتعليقات تلقائياً عبر Gemini
               </p>
             )}
           </div>
         </div>
-        {qrCode && !connected && (
-          <img src={qrCode} alt="WhatsApp QR" className="w-48 h-48 mx-auto my-4 rounded-xl border-2 border-gray-200 dark:border-gray-600" />
-        )}
+        <div className="bg-gray-50 dark:bg-gray-900 rounded-xl p-4 space-y-2">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">رابط Webhook (انسخه وأضفه في Facebook Developer Console):</p>
+          <div className="flex gap-2">
+            <input readOnly value={webhookUrl} className="input-field flex-1 text-xs font-mono" dir="ltr" onClick={e => e.currentTarget.select()} />
+            <button
+              onClick={() => { navigator.clipboard.writeText(webhookUrl); setToast({ message: 'تم النسخ!', type: 'success' }) }}
+              className="btn-accent px-3 py-2 text-xs"
+            >نسخ</button>
+          </div>
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            <div>
+              <p className="text-xs text-gray-400">Verify Token</p>
+              <p className="text-sm font-mono text-gray-800 dark:text-gray-200">marketing_assistant_verify_2026</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">حالة الذكاء الاصطناعي</p>
+              <p className="text-sm text-gray-800 dark:text-gray-200">
+                {igConnected ? 'مفعل (قم بإعداده في صفحة الذكاء الاصطناعي)' : '—'}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="card p-5">
