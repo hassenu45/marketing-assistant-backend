@@ -10,6 +10,7 @@ import Settings from './pages/Settings'
 import AIConfig from './pages/AIConfig'
 import Broadcast from './pages/Broadcast'
 import MobileApp from './pages/MobileApp'
+import Login from './pages/Login'
 import { seedDefaults } from './db/database'
 import { FiMenu } from 'react-icons/fi'
 import { WifiOff } from 'lucide-react'
@@ -97,7 +98,10 @@ export default function App() {
     <BrowserRouter>
       <ThemeProvider>
         <LanguageProvider>
-          <AppLayout />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/*" element={<AppLayout />} />
+          </Routes>
         </LanguageProvider>
       </ThemeProvider>
     </BrowserRouter>
