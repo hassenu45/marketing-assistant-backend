@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useLanguage } from '../contexts/LanguageContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { t } from '../i18n/translations'
-import { FiGrid, FiShoppingBag, FiMessageCircle, FiSettings, FiMoon, FiSun, FiX, FiSend } from 'react-icons/fi'
+import { FiGrid, FiShoppingBag, FiMessageCircle, FiSettings, FiMoon, FiSun, FiX, FiSend, FiPhone } from 'react-icons/fi'
 import { Bot } from 'lucide-react'
 
 const links = [
@@ -10,6 +10,7 @@ const links = [
   { to: '/orders', icon: FiShoppingBag, label: 'orders' },
   { to: '/chat', icon: FiMessageCircle, label: 'chat' },
   { to: '/broadcast', icon: FiSend, label: 'broadcast' },
+  { to: '/mobile-app', icon: FiPhone, label: 'mobile_app' },
   { to: '/ai-customization', icon: Bot, label: 'ai_customization' },
   { to: '/settings', icon: FiSettings, label: 'settings' },
 ]

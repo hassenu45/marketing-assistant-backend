@@ -2,14 +2,17 @@ import { useState, useEffect } from 'react'
 import { useLanguage } from '../contexts/LanguageContext'
 import { t } from '../i18n/translations'
 import db, { type AIConfig } from '../db/database'
-import { Bot, Sparkles, MessageCircle, MessageSquare, Percent, Phone, MapPin } from 'lucide-react'
+import { Bot, Sparkles, MessageCircle, MessageSquare, Percent, Phone, MapPin, ShoppingBag, Ticket, BarChart3, Star } from 'lucide-react'
 import { API_URL } from '../config'
 
 export default function AIConfig() {
   const { lang } = useLanguage()
   const [config, setConfig] = useState<AIConfig>({
     id: 1, enabled: 0, businessContext: '', aiTone: 'friendly', handlingRules: '',
-    phoneFormat: '', addressFormat: '', deliveryCommission: 0, botDms: 1, botComments: 0, updatedAt: '',
+    phoneFormat: '', addressFormat: '', deliveryCommission: 0, botDms: 1, botComments: 0,
+    upsellingEnabled: 0, upsellingConditions: '',
+    couponEnabled: 0, couponCode: '', couponDiscount: 0, couponExpiry: 30,
+    autoReports: 0, loyaltyPoints: 0, updatedAt: '',
   })
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -38,6 +41,14 @@ export default function AIConfig() {
           deliveryCommission: config.deliveryCommission,
           botDms: config.botDms === 1,
           botComments: config.botComments === 1,
+          upsellingEnabled: config.upsellingEnabled === 1,
+          upsellingConditions: config.upsellingConditions,
+          couponEnabled: config.couponEnabled === 1,
+          couponCode: config.couponCode,
+          couponDiscount: config.couponDiscount,
+          couponExpiry: config.couponExpiry,
+          autoReports: config.autoReports === 1,
+          loyaltyPoints: config.loyaltyPoints === 1,
         }),
       })
       setSuccess(true)
@@ -49,13 +60,19 @@ export default function AIConfig() {
     }
   }
 
-  const toggleEnabled = () => setConfig(prev => ({ ...prev, enabled: prev.enabled === 1 ? 0 : 1 }))
+  const toggle = (field: keyof AIConfig) => setConfig(prev => ({ ...prev, [field]: prev[field] === 1 ? 0 : 1 }))
 
   const tones = [
     { value: 'friendly', label: t('tone_friendly', lang) },
     { value: 'professional', label: t('tone_professional', lang) },
     { value: 'persuasive', label: t('tone_persuasive', lang) },
   ]
+
+  const Toggle = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (
+    <button onClick={onChange} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${checked ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'}`}>
+      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+    </button>
+  )
 
   return (
     <div className="space-y-6">
@@ -70,17 +87,10 @@ export default function AIConfig() {
           <Bot className="text-2xl" style={{ color: 'var(--accent)' }} />
           <div>
             <p className="font-medium text-gray-900 dark:text-white">{t('ai_enabled', lang)}</p>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {config.enabled === 1 ? t('ai_enabled', lang) : t('ai_disabled', lang)}
-            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{config.enabled === 1 ? t('ai_enabled', lang) : t('ai_disabled', lang)}</p>
           </div>
         </div>
-        <button
-          onClick={toggleEnabled}
-          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${config.enabled === 1 ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'}`}
-        >
-          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${config.enabled === 1 ? 'translate-x-6' : 'translate-x-1'}`} />
-        </button>
+        <Toggle checked={config.enabled === 1} onChange={() => toggle('enabled')} />
       </div>
 
       {/* Bot Placement */}
@@ -151,6 +161,76 @@ export default function AIConfig() {
         </div>
       </div>
 
+      {/* ──────── Upselling Section ──────── */}
+      <div className="bg-white dark:bg-gray-800 rounded-card shadow-sm p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <ShoppingBag className="text-xl" style={{ color: 'var(--accent)' }} />
+            <div>
+              <p className="font-medium text-gray-900 dark:text-white">{t('upselling', lang)}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('upselling_desc', lang)}</p>
+            </div>
+          </div>
+          <Toggle checked={config.upsellingEnabled === 1} onChange={() => toggle('upsellingEnabled')} />
+        </div>
+        {config.upsellingEnabled === 1 && (
+          <textarea className="input-field w-full min-h-[80px] resize-y mt-2" placeholder={t('upselling_conditions_placeholder', lang)} value={config.upsellingConditions} onChange={e => setConfig(prev => ({ ...prev, upsellingConditions: e.target.value }))} />
+        )}
+      </div>
+
+      {/* ──────── Smart Coupons Section ──────── */}
+      <div className="bg-white dark:bg-gray-800 rounded-card shadow-sm p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Ticket className="text-xl" style={{ color: 'var(--accent)' }} />
+            <div>
+              <p className="font-medium text-gray-900 dark:text-white">{t('smart_coupons', lang)}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('smart_coupons_desc', lang)}</p>
+            </div>
+          </div>
+          <Toggle checked={config.couponEnabled === 1} onChange={() => toggle('couponEnabled')} />
+        </div>
+        {config.couponEnabled === 1 && (
+          <div className="grid grid-cols-3 gap-3 mt-2">
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('coupon_code', lang)}</label>
+              <input className="input-field w-full" value={config.couponCode} onChange={e => setConfig(prev => ({ ...prev, couponCode: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('coupon_discount', lang)}</label>
+              <input type="number" className="input-field w-full" min="0" max="100" value={config.couponDiscount} onChange={e => setConfig(prev => ({ ...prev, couponDiscount: parseFloat(e.target.value) || 0 }))} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('coupon_expiry', lang)}</label>
+              <input type="number" className="input-field w-full" min="1" value={config.couponExpiry} onChange={e => setConfig(prev => ({ ...prev, couponExpiry: parseInt(e.target.value) || 30 }))} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ──────── Reports & Loyalty Section ──────── */}
+      <div className="bg-white dark:bg-gray-800 rounded-card shadow-sm p-4 space-y-3">
+        <div className="flex items-center gap-3 mb-3">
+          <BarChart3 className="text-xl" style={{ color: 'var(--accent)' }} />
+          <p className="font-medium text-gray-900 dark:text-white">{t('reports_loyalty', lang)}</p>
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-gray-400" />
+            <span className="text-sm text-gray-700 dark:text-gray-300">{t('auto_reports', lang)}</span>
+          </div>
+          <Toggle checked={config.autoReports === 1} onChange={() => toggle('autoReports')} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Star className="w-4 h-4 text-gray-400" />
+            <span className="text-sm text-gray-700 dark:text-gray-300">{t('loyalty_points', lang)}</span>
+          </div>
+          <Toggle checked={config.loyaltyPoints === 1} onChange={() => toggle('loyaltyPoints')} />
+        </div>
+      </div>
+
+      {/* Save Button */}
       <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
         {success && (
           <span className="text-green-600 dark:text-green-400 text-sm font-medium transition-opacity duration-300">✅ {t('settings_saved', lang)}</span>

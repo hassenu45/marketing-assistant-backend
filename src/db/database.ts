@@ -64,6 +64,14 @@ export interface AIConfig {
   deliveryCommission: number
   botDms: number
   botComments: number
+  upsellingEnabled: number
+  upsellingConditions: string
+  couponEnabled: number
+  couponCode: string
+  couponDiscount: number
+  couponExpiry: number
+  autoReports: number
+  loyaltyPoints: number
   updatedAt: string
 }
 
