@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: marketing-assistant-backend
+    runtime: docker
+    repo: https://github.com/hassenu45/marketing-assistant-backend
+    region: frankfurt
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: IG_ACCESS_TOKEN
+        sync: false
+      - key: IG_USER_ID
+        sync: false
+      - key: IG_VERIFY_TOKEN
+        sync: false
+      - key: MONGO_URI
+        sync: false

@@ -16,16 +16,20 @@ const GRAPH_API = 'https://graph.facebook.com/v21.0'
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 
-/* ─── Serve Frontend Static Files ─── */
-const DIST_PATH = fs.existsSync(path.join(__dirname, 'dist'))
-  ? path.join(__dirname, 'dist')
-  : path.join(__dirname, '..', 'dist')
-if (fs.existsSync(DIST_PATH)) {
-  app.use(express.static(DIST_PATH))
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/api/')) return next()
-    res.sendFile(path.join(DIST_PATH, 'index.html'))
-  })
+/* ─── Serve Frontend Static Files (optional) ─── */
+const DIST_CANDIDATES = [
+  path.join(__dirname, 'dist'),
+  path.join(__dirname, '..', 'dist'),
+]
+for (const p of DIST_CANDIDATES) {
+  if (fs.existsSync(p)) {
+    app.use(express.static(p))
+    app.use((req, res, next) => {
+      if (req.path.startsWith('/api/')) return next()
+      res.sendFile(path.join(p, 'index.html'))
+    })
+    break
+  }
 }
 
 /* ─── MongoDB Connection ─── */
