@@ -10,6 +10,7 @@ const Order = require('./models/Order')
 const app = express()
 const PORT = process.env.PORT || 3001
 const CONFIG_PATH = path.join(__dirname, 'ai_config.json')
+const RECIPIENTS_PATH = path.join(__dirname, 'recipients.json')
 const GRAPH_API = 'https://graph.facebook.com/v21.0'
 
 app.use(cors())
@@ -60,7 +61,46 @@ function saveConfigToFile(config) {
 
 loadConfig()
 
-/* ─── Gemini Reply Generator ─── */
+/* ─── Recipients (Instagram Contacts) ─── */
+function loadRecipients() {
+  try {
+    if (fs.existsSync(RECIPIENTS_PATH)) {
+      return JSON.parse(fs.readFileSync(RECIPIENTS_PATH, 'utf-8'))
+    }
+  } catch (err) {
+    console.error('Failed to load recipients:', err.message)
+  }
+  return []
+}
+
+function saveRecipients(recipients) {
+  try {
+    fs.writeFileSync(RECIPIENTS_PATH, JSON.stringify(recipients, null, 2))
+    return true
+  } catch (err) {
+    console.error('Failed to save recipients:', err.message)
+    return false
+  }
+}
+
+function addRecipient(senderId, senderName) {
+  const recipients = loadRecipients()
+  const existing = recipients.find(r => r.instagramId === senderId)
+  if (existing) {
+    existing.lastSeen = new Date().toISOString()
+    if (senderName) existing.name = senderName
+  } else {
+    recipients.push({
+      instagramId: senderId,
+      name: senderName || senderId,
+      firstSeen: new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
+    })
+  }
+  saveRecipients(recipients)
+}
+
+/* ─── Gemini Campaign Generator ─── */
 async function generateReply(messageText) {
   if (!process.env.GEMINI_API_KEY) return null
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
@@ -103,6 +143,38 @@ ${aiConfig.handlingRules || 'لا توجد قواعد خاصة'}
   return result.response.text().trim()
 }
 
+/* ─── Gemini Campaign Generator ─── */
+async function generateCampaignText(idea) {
+  if (!process.env.GEMINI_API_KEY) return null
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+
+  const toneMap = {
+    friendly: 'ودي ولطيف',
+    professional: 'رسمي ومباشر',
+    persuasive: 'تسويقي وحماسي',
+  }
+
+  const prompt = `أنت مساعد تسويقي محترف. اكتب رسالة تسويقية مميزة وجذابة باللغة العربية (أو لغة الفكرة إذا كانت إنجليزية) بناءً على فكرة العرض التالية.
+
+فكرة العرض: "${idea}"
+
+سياق العمل:
+${aiConfig.businessContext || 'لا يوجد'}
+
+نبرة الرسالة: ${toneMap[aiConfig.aiTone] || 'تسويقي وحماسي'}
+
+المطلوب:
+- رسالة قصيرة جذابة (لا تتجاوز 300 حرف)
+- تحفيزية وتشجع على الشراء
+- مناسبة للإرسال الجماعي عبر إنستغرام
+- لا تحتاج لرد من العميل (إعلان فقط)
+- اكتب الرسالة فقط بدون مقدمات أو تذييل`
+
+  const result = await model.generateContent(prompt)
+  return result.response.text().trim()
+}
+
 /* ─── Send Instagram Message via Graph API ─── */
 async function sendInstagramMessage(recipientId, text) {
   const token = process.env.IG_ACCESS_TOKEN
@@ -132,6 +204,9 @@ async function sendInstagramMessage(recipientId, text) {
 
 /* ─── Handle incoming Instagram message ─── */
 async function handleInstagramMessage(senderId, messageText) {
+  /* Save sender as recipient */
+  addRecipient(senderId)
+
   if (!aiConfig.enabled || !process.env.GEMINI_API_KEY) return
   try {
     const reply = await generateReply(messageText)
@@ -323,6 +398,62 @@ app.delete('/api/orders/:id', async (req, res) => {
 })
 
 const HOST = process.env.HOST || '0.0.0.0'
+
+/* ─── Broadcast Endpoints ─── */
+app.post('/api/broadcast/generate', async (req, res) => {
+  const { idea } = req.body
+  if (!idea) return res.status(400).json({ success: false, message: 'Campaign idea is required' })
+  try {
+    const text = await generateCampaignText(idea)
+    if (!text) return res.status(500).json({ success: false, message: 'Failed to generate text (check GEMINI_API_KEY)' })
+    res.json({ success: true, text })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+app.get('/api/broadcast/recipients', (req, res) => {
+  const recipients = loadRecipients()
+  res.json({ success: true, recipients, total: recipients.length })
+})
+
+app.post('/api/broadcast/send', async (req, res) => {
+  const { message } = req.body
+  if (!message) return res.status(400).json({ success: false, message: 'Message is required' })
+
+  const token = process.env.IG_ACCESS_TOKEN
+  const igUserId = process.env.IG_USER_ID
+  if (!token || !igUserId) {
+    return res.status(400).json({ success: false, message: 'Instagram not connected (no token)' })
+  }
+
+  const recipients = loadRecipients()
+  if (recipients.length === 0) {
+    return res.status(400).json({ success: false, message: 'No recipients found' })
+  }
+
+  let sent = 0
+  const errors = []
+  for (const recipient of recipients) {
+    try {
+      const ok = await sendInstagramMessage(recipient.instagramId, message)
+      if (ok) sent++
+      else errors.push(recipient.instagramId)
+    } catch (err) {
+      errors.push(recipient.instagramId)
+    }
+    /* Small delay to avoid rate limiting */
+    await new Promise(r => setTimeout(r, 200))
+  }
+
+  res.json({
+    success: sent > 0,
+    sent,
+    total: recipients.length,
+    errors: errors.length > 0 ? errors : undefined,
+  })
+})
+
 app.listen(PORT, HOST, () => {
   console.log(`Instagram Marketing Assistant Backend running on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`)
   console.log(`Webhook URL: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}/api/webhook/instagram`)

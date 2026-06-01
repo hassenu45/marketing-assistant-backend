@@ -8,6 +8,7 @@ import Orders from './pages/Orders'
 import Chat from './pages/Chat'
 import Settings from './pages/Settings'
 import AIConfig from './pages/AIConfig'
+import Broadcast from './pages/Broadcast'
 import { seedDefaults } from './db/database'
 import { FiMenu } from 'react-icons/fi'
 import { WifiOff } from 'lucide-react'
@@ -80,6 +81,7 @@ function AppLayout() {
             <Route path="/orders" element={<Orders />} />
             <Route path="/chat" element={<Chat />} />
             <Route path="/ai-customization" element={<AIConfig />} />
+            <Route path="/broadcast" element={<Broadcast />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
