@@ -6,6 +6,7 @@ const path = require('path')
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 const mongoose = require('mongoose')
 const Order = require('./models/Order')
+const BusinessConnection = require('./models/BusinessConnection')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -210,11 +211,14 @@ ${aiConfig.businessContext || 'لا يوجد'}
   return result.response.text().trim()
 }
 
-/* ─── Send Instagram Message via Graph API ─── */
-async function sendInstagramMessage(recipientId, text) {
-  const token = process.env.IG_ACCESS_TOKEN
-  const igUserId = process.env.IG_USER_ID
-  if (!token || !igUserId) return false
+/* ─── Send Instagram Message via Graph API (multi-tenant) ─── */
+async function sendInstagramMessage(recipientId, text, connection = null) {
+  const token = connection?.accessToken || process.env.IG_ACCESS_TOKEN
+  const igUserId = connection?.instagramUserId || process.env.IG_USER_ID
+  if (!token || !igUserId) {
+    console.warn('No token or IG user ID for', connection ? `account ${connection.instagramAccountId}` : 'env vars')
+    return false
+  }
 
   const url = `${GRAPH_API}/${igUserId}/messages`
   const body = { recipient: { id: recipientId }, message: { text } }
@@ -237,10 +241,10 @@ async function sendInstagramMessage(recipientId, text) {
   }
 }
 
-/* ─── Handle incoming Instagram message ─── */
-async function handleInstagramMessage(senderId, messageText) {
+/* ─── Handle incoming Instagram message (multi-tenant) ─── */
+async function handleInstagramMessage(senderId, messageText, connection = null) {
   /* Save sender as recipient */
-  addRecipient(senderId)
+  addRecipient(senderId, connection)
 
   if (!aiConfig.enabled || !process.env.GEMINI_API_KEY) return
   try {
@@ -269,13 +273,13 @@ async function handleInstagramMessage(senderId, messageText) {
             source: 'instagram',
           })
         }
-        if (cleanedReply) await sendInstagramMessage(senderId, cleanedReply)
+        if (cleanedReply) await sendInstagramMessage(senderId, cleanedReply, connection)
       } catch (parseErr) {
         console.error('Order JSON parse error:', parseErr.message)
-        await sendInstagramMessage(senderId, reply.replace(/---ORDER_START[\s\S]*?---ORDER_END/, '').trim())
+        await sendInstagramMessage(senderId, reply.replace(/---ORDER_START[\s\S]*?---ORDER_END/, '').trim(), connection)
       }
     } else {
-      await sendInstagramMessage(senderId, reply)
+      await sendInstagramMessage(senderId, reply, connection)
     }
   } catch (err) {
     console.error('AI reply error:', err.message)
@@ -287,27 +291,52 @@ app.get('/api/webhook/instagram', (req, res) => {
   const mode = req.query['hub.mode']
   const token = req.query['hub.verify_token']
   const challenge = req.query['hub.challenge']
+  const expected = process.env.IG_VERIFY_TOKEN
 
-  if (mode === 'subscribe' && token === process.env.IG_VERIFY_TOKEN) {
-    console.log('Instagram webhook verified!')
+  if (mode === 'subscribe' && token === expected) {
+    console.log('Webhook verified!')
     return res.status(200).send(challenge)
   }
-  res.sendStatus(403)
+
+  /* رسالة خطأ واضحة للتشخيص */
+  console.warn(`Webhook verify failed: mode=${mode}, token=${token}, expected=${expected ? '***set***' : 'NOT_SET'}`)
+  res.status(403).json({
+    error: 'Verification failed',
+    hint: !expected ? 'Set IG_VERIFY_TOKEN in Render env vars and redeploy' :
+          mode !== 'subscribe' ? `Expected mode=subscribe, got ${mode}` :
+          `Token mismatch (check IG_VERIFY_TOKEN)`,
+    token_received: token || '(empty)',
+    server_time: new Date().toISOString(),
+  })
 })
 
-/* ─── Webhook: Receive events (POST) ─── */
-app.post('/api/webhook/instagram', (req, res) => {
+/* ─── Webhook: Receive events (POST) - Multi-tenant ─── */
+app.post('/api/webhook/instagram', async (req, res) => {
   const body = req.body
 
   if (body.object !== 'instagram') return res.sendStatus(400)
 
   for (const entry of body.entry || []) {
+    const accountId = entry.id
+    if (!accountId) continue
+
+    /* Look up connection by Instagram Business Account ID (multi-tenant) */
+    let connection = null
+    try {
+      connection = await BusinessConnection.findOne({
+        instagramAccountId: String(accountId),
+        isActive: true,
+      })
+    } catch (err) {
+      console.error('DB lookup error:', err.message)
+    }
+
     /* رسائل مباشرة */
     for (const msg of entry.messaging || []) {
       const senderId = msg.sender?.id
       const text = msg.message?.text
       if (senderId && text) {
-        handleInstagramMessage(senderId, text)
+        handleInstagramMessage(senderId, text, connection)
       }
     }
 
@@ -318,7 +347,7 @@ app.post('/api/webhook/instagram', (req, res) => {
         const text = val.text
         const fromId = val.from?.id
         if (fromId && text) {
-          handleInstagramMessage(fromId, text)
+          handleInstagramMessage(fromId, text, connection)
         }
       }
     }
@@ -375,13 +404,19 @@ app.post('/api/instagram/save-config', (req, res) => {
   })
 })
 
-/* ─── Send message manually ─── */
+/* ─── Send message manually (supports accountId for multi-tenant) ─── */
 app.post('/api/instagram/send', async (req, res) => {
-  const { recipientId, message } = req.body
+  const { recipientId, message, accountId } = req.body
   if (!recipientId || !message) {
     return res.status(400).json({ success: false, message: 'Missing recipientId or message' })
   }
-  const ok = await sendInstagramMessage(recipientId, message)
+  let connection = null
+  if (accountId) {
+    try {
+      connection = await BusinessConnection.findOne({ instagramAccountId: String(accountId), isActive: true })
+    } catch (_) {}
+  }
+  const ok = await sendInstagramMessage(recipientId, message, connection)
   res.json({ success: ok })
 })
 
@@ -393,6 +428,51 @@ app.get('/api/webhook/instagram/test', (req, res) => {
     access_token_set: !!process.env.IG_ACCESS_TOKEN,
     ig_user_id: process.env.IG_USER_ID || 'لم يتم التعيين',
   })
+})
+
+/* ─── Business Connections CRUD (multi-tenant) ─── */
+app.get('/api/connections', async (req, res) => {
+  try {
+    const connections = await BusinessConnection.find({ isActive: true }).sort({ createdAt: -1 })
+    res.json({ success: true, connections })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+app.post('/api/connections', async (req, res) => {
+  const { instagramAccountId, accessToken, instagramUserId, instagramBusinessName, pageId } = req.body
+  if (!instagramAccountId || !accessToken || !instagramUserId) {
+    return res.status(400).json({ success: false, message: 'Missing required fields: instagramAccountId, accessToken, instagramUserId' })
+  }
+  try {
+    const existing = await BusinessConnection.findOne({ instagramAccountId: String(instagramAccountId) })
+    if (existing) {
+      Object.assign(existing, { accessToken, instagramUserId, instagramBusinessName, pageId, isActive: true })
+      await existing.save()
+      return res.json({ success: true, connection: existing, message: 'Connection updated' })
+    }
+    const connection = await BusinessConnection.create({
+      userId: req.body.userId || '000000000000000000000000',
+      instagramAccountId: String(instagramAccountId),
+      accessToken,
+      instagramUserId,
+      instagramBusinessName: instagramBusinessName || '',
+      pageId: pageId || '',
+    })
+    res.json({ success: true, connection, message: 'Connection created' })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+app.delete('/api/connections/:id', async (req, res) => {
+  try {
+    await BusinessConnection.findByIdAndUpdate(req.params.id, { isActive: false })
+    res.json({ success: true, message: 'Connection deactivated' })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
 })
 
 /* ─── Orders CRUD ─── */
