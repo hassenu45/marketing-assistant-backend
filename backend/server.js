@@ -15,6 +15,7 @@ const CONFIG_PATH = path.join(__dirname, 'ai_config.json')
 const RECIPIENTS_PATH = path.join(__dirname, 'recipients.json')
 const GRAPH_API = 'https://graph.facebook.com/v21.0'
 
+app.set('trust proxy', 1)
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 
@@ -495,7 +496,8 @@ app.get('/api/auth/instagram', (req, res) => {
   const redirect = req.query.redirect || ''
   oauthStateMap.set(state, { createdAt: Date.now(), expiresAt: Date.now() + 600000, redirect })
 
-  const callbackUrl = `${req.protocol}://${req.get('host')}/api/auth/instagram/callback`
+  const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`
+  const callbackUrl = `${baseUrl}/api/auth/instagram/callback`
   const scope = 'instagram_business_basic,instagram_business_manage_messages,pages_show_list,pages_read_engagement'
   const fbUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}&scope=${encodeURIComponent(scope)}&response_type=code`
 
@@ -520,7 +522,8 @@ app.get('/api/auth/instagram/callback', async (req, res) => {
 
   const appId = process.env.FB_APP_ID
   const appSecret = process.env.FB_APP_SECRET
-  const callbackUrl = `${req.protocol}://${req.get('host')}/api/auth/instagram/callback`
+  const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`
+  const callbackUrl = `${baseUrl}/api/auth/instagram/callback`
 
   try {
     const axios = require('axios')
