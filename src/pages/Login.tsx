@@ -1,5 +1,3 @@
-import { useLanguage } from '../contexts/LanguageContext'
-import { t } from '../i18n/translations'
 import { Link } from 'react-router-dom'
 import { FiInstagram } from 'react-icons/fi'
 
@@ -18,8 +16,6 @@ const CamoLogo = ({ size = 88 }: { size?: number }) => (
 )
 
 export default function Login() {
-  const { lang } = useLanguage()
-
   return (
     <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6">
       <div className="flex flex-col items-center mb-12">

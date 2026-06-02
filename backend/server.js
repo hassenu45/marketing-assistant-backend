@@ -7,6 +7,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai')
 const mongoose = require('mongoose')
 const Order = require('./models/Order')
 const BusinessConnection = require('./models/BusinessConnection')
+const PairingSession = require('./models/PairingSession')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -470,6 +471,298 @@ app.delete('/api/connections/:id', async (req, res) => {
   try {
     await BusinessConnection.findByIdAndUpdate(req.params.id, { isActive: false })
     res.json({ success: true, message: 'Connection deactivated' })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+/* ─── Instagram OAuth 2.0 ─── */
+const crypto = require('crypto')
+const oauthStateMap = new Map()
+
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, val] of oauthStateMap) {
+    if (now > val.expiresAt) oauthStateMap.delete(key)
+  }
+}, 60000)
+
+app.get('/api/auth/instagram', (req, res) => {
+  const appId = process.env.FB_APP_ID
+  if (!appId) return res.status(500).send('<html><body><h2>FB_APP_ID not configured</h2><p>Set FB_APP_ID and FB_APP_SECRET in environment variables.</p></body></html>')
+
+  const state = crypto.randomBytes(16).toString('hex')
+  const redirect = req.query.redirect || ''
+  oauthStateMap.set(state, { createdAt: Date.now(), expiresAt: Date.now() + 600000, redirect })
+
+  const callbackUrl = `${req.protocol}://${req.get('host')}/api/auth/instagram/callback`
+  const scope = 'instagram_business_basic,instagram_business_manage_messages,pages_show_list,pages_read_engagement'
+  const fbUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}&scope=${encodeURIComponent(scope)}&response_type=code`
+
+  res.redirect(fbUrl)
+})
+
+app.get('/api/auth/instagram/callback', async (req, res) => {
+  const { code, state } = req.query
+
+  const stateData = oauthStateMap.get(state)
+  if (!state || !stateData) {
+    return res.status(400).send(wrapPopupHtml('error', 'Invalid state parameter. Try again.'))
+  }
+  const redirectUrl = stateData.redirect
+  oauthStateMap.delete(state)
+
+  if (!code) {
+    const msg = 'Authorization denied or missing code.'
+    if (redirectUrl) return res.redirect(`${redirectUrl}?error=${encodeURIComponent(msg)}`)
+    return res.status(400).send(wrapPopupHtml('error', msg))
+  }
+
+  const appId = process.env.FB_APP_ID
+  const appSecret = process.env.FB_APP_SECRET
+  const callbackUrl = `${req.protocol}://${req.get('host')}/api/auth/instagram/callback`
+
+  try {
+    const axios = require('axios')
+
+    /* Exchange code for short-lived token */
+    const tokenRes = await axios.get('https://graph.facebook.com/v21.0/oauth/access_token', {
+      params: { client_id: appId, client_secret: appSecret, code, redirect_uri: callbackUrl },
+    })
+    const shortToken = tokenRes.data.access_token
+
+    /* Exchange for long-lived token (60 days) */
+    const longRes = await axios.get('https://graph.facebook.com/v21.0/oauth/access_token', {
+      params: { grant_type: 'fb_exchange_token', client_id: appId, client_secret: appSecret, fb_exchange_token: shortToken },
+    })
+    const longToken = longRes.data.access_token
+
+    /* Get user's Pages */
+    const pagesRes = await axios.get(`https://graph.facebook.com/v21.0/me/accounts`, {
+      params: { access_token: longToken },
+    })
+    const pages = pagesRes.data.data || []
+
+    if (pages.length === 0) {
+      const msg = 'No Facebook Pages found. Create a Page first and link Instagram.'
+      if (redirectUrl) return res.redirect(`${redirectUrl}?error=${encodeURIComponent(msg)}`)
+      return res.send(wrapPopupHtml('error', msg))
+    }
+
+    /* Find the first page that has an Instagram Business Account */
+    let connected = false
+    let resultData = null
+    for (const page of pages) {
+      try {
+        const pageIgRes = await axios.get(`https://graph.facebook.com/v21.0/${page.id}`, {
+          params: { fields: 'instagram_business_account', access_token: page.access_token },
+        })
+        const igAccount = pageIgRes.data.instagram_business_account
+        if (igAccount) {
+          await BusinessConnection.findOneAndUpdate(
+            { instagramAccountId: String(igAccount.id) },
+            {
+              instagramAccountId: String(igAccount.id),
+              accessToken: page.access_token,
+              instagramUserId: String(igAccount.id),
+              instagramBusinessName: page.name || '',
+              pageId: page.id,
+              isActive: true,
+            },
+            { upsert: true, new: true }
+          )
+          connected = true
+          resultData = { instagramAccountId: igAccount.id, instagramBusinessName: page.name, pageId: page.id }
+          break
+        }
+      } catch { }
+    }
+
+    if (!connected) {
+      const msg = 'No Instagram Business Account linked to your Pages. Connect Instagram to a Page first.'
+      if (redirectUrl) return res.redirect(`${redirectUrl}?error=${encodeURIComponent(msg)}`)
+      return res.send(wrapPopupHtml('error', msg))
+    }
+
+    if (redirectUrl) {
+      return res.redirect(`${redirectUrl}?success=true`)
+    }
+    res.send(wrapPopupHtml('success', '', resultData))
+  } catch (err) {
+    console.error('OAuth error:', err.response?.data || err.message)
+    const msg = `OAuth failed: ${err.response?.data?.error?.message || err.message}`
+    if (redirectUrl) return res.redirect(`${redirectUrl}?error=${encodeURIComponent(msg)}`)
+    res.send(wrapPopupHtml('error', msg))
+  }
+})
+
+function wrapPopupHtml(status, message, data = null) {
+  const json = JSON.stringify({ success: status === 'success', message, ...(data || {}) })
+  return `<!DOCTYPE html><html><body><script>
+    const payload = ${json};
+    if (window.opener) {
+      try { window.opener.postMessage(payload, '*'); } catch {}
+      window.close();
+    } else {
+      document.body.innerHTML = '<h2>' + (payload.success ? '✅ Connected!' : '❌ ' + payload.message) + '</h2>' +
+        '<p>You can close this tab and return to the app.</p>';
+    }
+  </script></body></html>`
+}
+
+/* ─── Pairing / Mobile App Sync ─── */
+app.post('/api/pairing/generate', async (req, res) => {
+  try {
+    const session = await PairingSession.generate(req.body.userId || '')
+    res.json({
+      success: true,
+      code: session.code,
+      token: session.token,
+      qrData: `${req.protocol}://${req.get('host')}/pair?code=${session.code}`,
+      expiresAt: session.expiresAt,
+    })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+app.get('/api/pairing/check', async (req, res) => {
+  try {
+    const session = await PairingSession.findOne({ code: String(req.query.code || '').toUpperCase() })
+    if (!session) return res.json({ success: false, message: 'Not found' })
+    res.json({
+      success: true,
+      status: session.status,
+      pairedAt: session.pairedAt,
+      deviceId: session.deviceId,
+    })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+app.post('/api/pairing/verify', async (req, res) => {
+  const { code } = req.body
+  if (!code) return res.status(400).json({ success: false, message: 'Missing code' })
+
+  try {
+    const session = await PairingSession.findOne({ code: String(code).toUpperCase(), status: 'pending' })
+    if (!session) return res.status(404).json({ success: false, message: 'Invalid or expired code' })
+
+    if (new Date() > session.expiresAt) {
+      session.status = 'expired'
+      await session.save()
+      return res.status(410).json({ success: false, message: 'Code expired' })
+    }
+
+    const deviceToken = require('crypto').randomBytes(32).toString('hex')
+    session.status = 'paired'
+    session.deviceToken = deviceToken
+    session.deviceTokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+    session.deviceId = req.body.deviceId || ''
+    session.pairedAt = new Date()
+    await session.save()
+
+    res.json({
+      success: true,
+      deviceToken,
+      session: {
+        code: session.code,
+        pairedAt: session.pairedAt,
+      },
+    })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+app.post('/api/sync', async (req, res) => {
+  const deviceToken = req.headers['x-device-token']
+  if (!deviceToken) return res.status(401).json({ success: false, message: 'Missing device token' })
+
+  try {
+    const session = await PairingSession.findByDeviceToken(deviceToken)
+    if (!session) {
+      const expired = await PairingSession.findOne({ deviceToken, status: 'paired' })
+      return res.status(401).json({
+        success: false,
+        code: expired ? 'token_expired' : 'invalid_token',
+        message: expired ? 'Token expired, please re-pair or refresh' : 'Invalid or unpaired token',
+      })
+    }
+
+    const { orders, config } = req.body
+    const results = { orders: { synced: 0, errors: [] }, config: null }
+
+    if (orders && Array.isArray(orders)) {
+      for (const order of orders) {
+        try {
+          if (order._id) {
+            await Order.findByIdAndUpdate(order._id, order, { upsert: true })
+          } else {
+            await Order.create(order)
+          }
+          results.orders.synced++
+        } catch (err) {
+          results.orders.errors.push(order.orderNumber || 'unknown')
+        }
+      }
+    }
+
+    if (config) {
+      const existing = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+      Object.assign(existing, config)
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(existing, null, 2))
+      results.config = existing
+    }
+
+    res.json({ success: true, ...results })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+app.get('/api/sync', async (req, res) => {
+  const deviceToken = req.headers['x-device-token']
+  if (!deviceToken) return res.status(401).json({ success: false, message: 'Missing device token' })
+
+  try {
+    const session = await PairingSession.findByDeviceToken(deviceToken)
+    if (!session) {
+      const expired = await PairingSession.findOne({ deviceToken, status: 'paired' })
+      return res.status(401).json({
+        success: false,
+        code: expired ? 'token_expired' : 'invalid_token',
+        message: expired ? 'Token expired, please re-pair or refresh' : 'Invalid or unpaired token',
+      })
+    }
+
+    const orders = await Order.find().sort({ createdAt: -1 }).lean()
+    let config = {}
+    try {
+      config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+    } catch { /* ignore */ }
+
+    res.json({ success: true, orders, config })
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+app.post('/api/pairing/refresh-token', async (req, res) => {
+  const oldToken = req.headers['x-device-token']
+  if (!oldToken) return res.status(401).json({ success: false, message: 'Missing device token' })
+
+  try {
+    const session = await PairingSession.findOne({ deviceToken: oldToken, status: 'paired' })
+    if (!session) return res.status(401).json({ success: false, message: 'Invalid or unpaired token' })
+
+    const newToken = await session.refreshDeviceToken()
+    res.json({
+      success: true,
+      deviceToken: newToken,
+      expiresAt: session.deviceTokenExpiresAt,
+    })
   } catch (err) {
     res.status(500).json({ success: false, message: err.message })
   }
